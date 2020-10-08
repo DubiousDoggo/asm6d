@@ -1,4 +1,7 @@
 *.exe
 *.o
 *.obj
+*.ps1
+test_cases
+.vscode
 asm6f
