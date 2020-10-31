@@ -220,7 +220,7 @@ typedef struct comment
 } comment;
 
 void initsymboltable();
-symbol *findlabel(const char *);
+symbol *findsymbol(const char *);
 symbol *newlabel();
 symbol *getreserved(char **);
 

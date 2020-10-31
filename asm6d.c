@@ -473,8 +473,7 @@ int hexify(int i)
         return i - 'a' + 10;
     if (i >= 'A' && i <= 'F')
         return i - 'A' + 10;
-    errmsg = NotANumber;
-    return 0;
+    THROW(NotANumber);
 }
 
 // find end of str, excluding any chars in ignore
@@ -566,8 +565,8 @@ int getvalue(char **str)
     }
     else
     { // symbol
-        symbol *p = findlabel(gvline);
-        if (p == NULL)
+        symbol *p = findsymbol(gvline);
+        if (!p)
         { // symbol doesn't exist (yet?)
             needanotherpass = true;
             dependant = true;
@@ -587,7 +586,7 @@ int getvalue(char **str)
             else if (p->type == MACRO)
                 THROW(MacroInExpression);
             else
-                THROW(UnknownLabel);
+                THROW(UnknownLabel); // trying to use a reserved word as a label
         }
     }
     return ret;
@@ -675,7 +674,7 @@ enum operator getoperator(char **str)
 
 // evaluate expression in str and advance str
 // sets errmsg on error
-// if errmsg is set, the return value may be garbage
+// if errmsg is set, the return value is undefined
 int eval(char **str, enum prectype precedence)
 {
     int ret;
@@ -747,10 +746,12 @@ int eval(char **str, enum prectype precedence)
     {
         *str = s;
         op = getoperator(&s);
-        if (precedence < prec[op])
+        if (prec[op] > precedence)
         { // if the precedence of the op we just read is higher than our own, evaluate it first
             int val2 = eval(&s, prec[op]);
+
             if (!dependant)
+            {
                 switch (op)
                 {
                 case AND:
@@ -814,17 +815,20 @@ int eval(char **str, enum prectype precedence)
                     ret >>= val2;
                     break;
                 }
+            }
             else
+            { // dependant
                 ret = 0;
+            }
         }
-    } while (precedence < prec[op] && !errmsg);
+    } while (prec[op] > precedence && !errmsg);
     return ret;
 }
 
 // copy next word from src into dst and advance src
 // also stop at mathy chars if mcheck is true (false for filenames, etc)
 // uses strtok so its kinda quirky
-// assumes dst is at least WORDMAX size
+// assumes dst is WORDMAX size
 void getword(char *dst, char **src, bool mcheck)
 {
     // TODO clean up the unneccecary copying
@@ -877,9 +881,9 @@ symbol *getreserved(char **src)
         my_strupr(upp);
     }
 
-    p = findlabel(upp); // case insensitive reserved word
+    p = findsymbol(upp); // case insensitive reserved word
     if (!p)
-        p = findlabel(dst); // or case sensitive macro
+        p = findsymbol(dst); // or case sensitive macro
     if (p)
     {
         if (p->type == MACRO)
@@ -1004,7 +1008,7 @@ char *expandline(char *dst, char *src)
                 if (strcmp(upp, ".IFDEF") == 0 || strcmp(upp, ".IFNDEF") == 0)
                     def_skip = true;
                 else
-                    p = findlabel(start);
+                    p = findsymbol(start);
             }
 
             if (p)
@@ -1329,9 +1333,9 @@ void export_mesen()
 void addlabel(char *word, bool local)
 {
     char c = *word;
-    symbol *p = findlabel(word);                     // check for exitsing labels
-    if (p && local && !p->scope && p->type != VALUE) // if it's global and we're local
-        p = NULL;                                    // pretend we didn't see it (local label overrides global of the same name)
+    symbol *p = findsymbol(word);                        // check for exitsing labels
+    if (p && local && p->scope == 0 && p->type != VALUE) // if it's global and we're local
+        p = NULL;                                        // pretend we didn't see it (local label overrides global of the same name)
     // global labels advance scope
     if (c != LOCALCHAR && !local)
         scope = nextscope++;
@@ -1405,7 +1409,7 @@ void initsymboltable(void)
     symbol *p;
     for (int i = 0; instr_list[i].name; i++)
     { // opcodes first
-        findlabel(instr_list[i].name);
+        findsymbol(instr_list[i].name);
         p = newlabel();
         p->name = instr_list[i].name;
         p->func = opcode;
@@ -1415,7 +1419,7 @@ void initsymboltable(void)
 
     for (int i = 0; directives[i].name; i++)
     { // other reserved words now
-        findlabel(directives[i].name);
+        findsymbol(directives[i].name);
         p = newlabel();
         p->name = directives[i].name;
         p->func = directives[i].func;
@@ -1494,7 +1498,7 @@ int findindex; //
 // if name wasn't found, findindex points to where name would be inserted (name<symbol_table[findindex])
 // if name was found but with wrong scope/pass, findcmp = 0 and returns NULL
 // don't call if list is empty!
-symbol *findlabel(const char *name)
+symbol *findsymbol(const char *name)
 {
     symbol *p, *global;
 
@@ -1569,8 +1573,8 @@ void growlist(void)
     symbol_end = newhead + symbol_count - 1;
 }
 
-// make new empty label and add it to list using result from last findlabel
-// ONLY use after calling findlabel
+// make new empty label and add it to list using result from last findsymbol
+// ONLY use after calling findsymbol
 // scope is always initialized to 0
 // if findcmp = 0, name and link are initialized using symbol_table[findindex],
 // otherwise both are NULL
@@ -1885,7 +1889,7 @@ int main(int argc, char **argv)
             case 'd':
                 if (argv[i][2])
                 {
-                    if (!findlabel(&argv[i][2]))
+                    if (!findsymbol(&argv[i][2]))
                     {
                         symbol *p = newlabel();
                         p->name = my_strdup(&argv[i][2]);
@@ -2268,7 +2272,7 @@ void equ(symbol *id, char **next)
 
 void equal(symbol *id, char **next)
 {
-    if (!labelhere)           // labelhere = index + 1
+    if (!labelhere)
         THROW_VOID(NeedName); // = without a name
     else
     {
@@ -2711,7 +2715,7 @@ void ifdef(symbol *id, char **next)
     else
         iflevel++;
     readlabel(s, next);
-    skipline[iflevel] = !(ptrdiff_t)findlabel(s) || skipline[iflevel - 1];
+    skipline[iflevel] = !(ptrdiff_t)findsymbol(s) || skipline[iflevel - 1];
     ifdone[iflevel] = !skipline[iflevel];
 }
 
@@ -2723,7 +2727,7 @@ void ifndef(symbol *id, char **next)
     else
         iflevel++;
     readlabel(s, next);
-    skipline[iflevel] = (ptrdiff_t)findlabel(s) || skipline[iflevel - 1];
+    skipline[iflevel] = (ptrdiff_t)findsymbol(s) || skipline[iflevel - 1];
     ifdone[iflevel] = !skipline[iflevel];
 }
 
@@ -2837,8 +2841,7 @@ void expandmacro(symbol *id, char **next, int lineno, char *filename)
 {
     if (id->used)
     { // protect against recursive macros
-        errmsg = RecurseMACRO;
-        return;
+        THROW_VOID(RecurseMACRO);
     }
     id->used = true;
     insidemacro++;
