@@ -32,7 +32,7 @@ Options:
         
 Default names are given if any of the options with an optional name are given without a name.
 
-# Numbers and expressions
+## Numbers and expressions
 
 Hexadecimal numbers begin with `$`. Binary numbers begin with `%`. Characters are surronded by single quotes and strings are surrounded by double quotes. The characters `'`, `"` and `\` must be escaped with a backslash when in quotes.
 
@@ -61,7 +61,7 @@ Supported operators (listed by precedence):
 
 The unary `<` and `>` operators give the lower and upper byte of a 16-bit word respectively. All other operators function like their C equivalents.
 
-# Comments
+## Comments
 
 Comments begin with a semicolon `;` and continue to the end of the line. Only single line comments are supported, no block comments.
 
@@ -70,7 +70,7 @@ Comments begin with a semicolon `;` and continue to the end of the line. Only si
 
 <a id="labels"></a>
 
-# Labels
+## Labels
 
 Labels are case sensitive and must be followed by a colon. Labels beginning with `@` are local labels. They have limited scope, visible only between non-local labels. Names of local labels may be reused.
 
@@ -99,18 +99,18 @@ Labels beginning with one or more `+` or `-` characters are directional labels. 
     +here: INY
          + LDX #0
 
-# Assembler Directives
+## Assembler Directives
 
 All directives are case insensitive and must begin with a dot `.`
 
-## INCLUDE (also INCSRC)
+### INCLUDE (also INCSRC)
 
 Assemble another source file as if it were part of the current
 source.
     
     .include whatever.asm
 
-## INCBIN
+### INCBIN
 
 Add the raw contents of a file to the assembly output.
 
@@ -123,7 +123,7 @@ An optional file offset and size can be specified.
 
 <a id="ines"></a>
 
-## iNES directives
+### iNES directives
 
 ASM6d supports automatic generation of an iNES header. Both the original iNES and the iNES 2.0 format is supported.
 Note that using an iNES header is optional; it's only inserted if at least one of the following directives is used.
@@ -141,7 +141,7 @@ Note that using an iNES header is optional; it's only inserted if at least one o
     .NES2BRAM    ; Amount of battery-packed PRG RAM.
     .NES2CHRBRAM ; Amount of battery-packed CHR RAM.
 
-## EQU
+### EQU
 
 For literal string replacement, similar to #define in C.
     
@@ -149,7 +149,7 @@ For literal string replacement, similar to #define in C.
     plus: .equ +
     .db one plus one ; .db 1 + 1
 
-## = (Assignment)
+### = (Assignment)
 
 Unlike EQU, statements with = are evaluated to a number first. Also unlike EQU, symbols created with = can be reassigned. These statements also do not require a colon.
 
@@ -159,7 +159,7 @@ Unlike EQU, statements with = are evaluated to a number first. Also unlike EQU, 
     i = j + 1 ; i = i+1 + 1
     i = k + 1 ; i = 2 + 1
 
-## IGNORENL, ENDINL
+### IGNORENL, ENDINL
 
 Suppresses output of any labels when exporting FCEUX .nl files.
 Useful for defining labels that may conflict with zero page addresses.
@@ -176,7 +176,7 @@ Useful for defining labels that may conflict with zero page addresses.
         PAD_RIGHT  = %00000001
     .endinl
 
-## DB, DW
+### DB, DW
 
 Output raw bytes or words. Multiple arguments are separated by commas. Strings can be "shifted" by adding a value to them (see example).
 
@@ -184,14 +184,14 @@ Output raw bytes or words. Multiple arguments are separated by commas. Strings c
     .db "ABCDE" + 1          ; equivalent to DB "BCDEF"
     .db "ABCDE" - "A" + 32   ; equivalent to DB 32,33,34,35,36
 
-## DL, DH
+### DL, DH
 
 Similar to DB, outputting only the LSB or MSB of a value.
 
     .dl a, b, c, d ; equivalent to .db <a, <b, <c, <d
     .dh a, b, c, d ; equivalent to .db >a, >b, >c, >d
 
-## HEX
+### HEX
 
 Compact way of laying out a table of hex values. Only raw hex values are allowed, no expressions. Spaces can be used to separate numbers.
 
@@ -199,7 +199,7 @@ Compact way of laying out a table of hex values. Only raw hex values are allowed
     .hex 45 67 89 AB CD ; equivalent to .db $45, $67, $89, $AB, $CD
     .hex  0  1 23 45 67 ; equivalent to .db $00, $01, $23, $45, $67
 
-## DSB, DSW
+### DSB, DSW
 
 Define storage (bytes or words). The size argument may be followed by a fill value (default filler is 0).
 
@@ -207,27 +207,27 @@ Define storage (bytes or words). The size argument may be followed by a fill val
     .dsb 8, 1     ; equivalent to .db 1,1,1,1,1,1,1,1
     .dsw 4, $ABCD ; equivalent to .dw $ABCD,$ABCD,$ABCD,$ABCD
 
-## PAD
+### PAD
 
 Fill memory from the current address to a specified address. A fill value may also be specified.
 
     .pad $FFFA      ; equivalent to .dsb $FFFA - $
     .pad $FFFA, $EA ; equivalent to .dsb $FFFA - $, $EA
 
-## ORG
+### ORG
 
 Set the starting address if it hasn't been assigned yet, otherwise functions like PAD.
 
     .org $E000     ; start assembling at $E000
     .org $FFFA,$80 ; equivalent to .pad $FFFA
 
-## ALIGN
+### ALIGN
 
 Fill memory from the current address to an N byte boundary. A fill value may also be specified.
 
     .align 256, $EA
 
-## BASE
+### BASE
 
 Set the program address. This is useful for relocatable code, multiple code banks, etc. The same can also be accomplished by assigning the '$' symbol directly (i.e. '$=9999').
 
@@ -239,7 +239,7 @@ Set the program address. This is useful for relocatable code, multiple code bank
         .
     .base oldaddr + $ - stuff
 
-## FILLVALUE
+### FILLVALUE
 
 Change the default filler for PAD, ALIGN, etc.
 
@@ -247,7 +247,7 @@ Change the default filler for PAD, ALIGN, etc.
     .pad $E000 ; equivalant to .pad $E000, $FF
 
 
-## IF / ELSEIF / ELSE / ENDIF
+### IF / ELSEIF / ELSE / ENDIF
 
 Process a block of code if an expression is true (nonzero).
 
@@ -257,7 +257,7 @@ Process a block of code if an expression is true (nonzero).
         .db 0
     .endif
 
-## IFDEF / IFNDEF
+### IFDEF / IFNDEF
 
 Process a block of code if a symbol has been defined / not defined.
 
@@ -267,7 +267,7 @@ Process a block of code if a symbol has been defined / not defined.
 
 <a id="macro"></a>
 
-## MACRO / ENDM
+### MACRO / ENDM
 
 Define a macro. Macro parameters are comma separated. Labels defined inside macros are local (visible only to that macro).
 
@@ -284,7 +284,7 @@ Define a macro. Macro parameters are comma separated. Labels defined inside macr
 
 <a id="rept"></a>
 
-## REPT / ENDR
+### REPT / ENDR
 
 Repeat a block of code a specified number of times.
 Labels defined inside REPT are local.
@@ -295,7 +295,7 @@ Labels defined inside REPT are local.
         i = i + 1
     .endr
 
-## ENUM / ENDE
+### ENUM / ENDE
 
 Reassign PC and suppress assembly output. Useful for defining variables in RAM.
 
@@ -305,7 +305,7 @@ Reassign PC and suppress assembly output. Useful for defining variables in RAM.
     .ende
 
 
-## ERROR
+### ERROR
 
 Stop assembly and display a message.
 
@@ -315,7 +315,7 @@ Stop assembly and display a message.
 
 <a id="undoc"></a>
 
-## UNDOC
+### UNDOC
 
 Enables use of undocumented instructions.
 
@@ -327,7 +327,7 @@ Enables use of undocumented instructions.
 
 <a id="undocumented"></a>
 
-# Undocumented Instructions
+## Undocumented Instructions
 
 asm6d supports a number of undocumented or "illegal" instructions.
 These instuctions require the use of the [`.undoc`](#undoc) directive, otherwise an error will be thrown.
@@ -336,82 +336,70 @@ More information about these instructions can be found in [Graham's 6502 Opcode 
 
 The alternate `$EB` opcode for `SBC` immediate is not supported.
 
-### `SLO` - Shift Left, Or
-Equivalant to `ASL`, `ORA`.
-> Also known as `ASO`.
+#### SLO - Shift Left, Or
+Equivalant to `ASL`, `ORA`.  
+Also known as `ASO`.
 
-### `RLA` - Rotate Left, And
+#### RLA - Rotate Left, And
 Equivalant to `ROL`, `AND`.
 
-### `SRE` - Shift Right, Exclusive Or
-Equivalant to `LSR`, `EOR`.
-> Also known as `LSE`.
+#### SRE - Shift Right, Exclusive Or
+Equivalant to `LSR`, `EOR`.  
+Also known as `LSE`.
 
-### `RRA` - Rotate Right, Add with Carry
+#### RRA - Rotate Right, Add with Carry
 Equivalant to `ROR`, `ADC`.
 
-### `SAX` - Store A and X
+#### SAX - Store A and X
 Stores the bitwise and of A and X into the operand.
 The A & X operation is a result of A and X put onto the bus at the same time.
 
-### `LAX` - Load A, Load X
+#### LAX - Load A, Load X
 `LDA` and `LDX` at the same time.
 
-### `DCP` - Decrement, Compare
+#### DCP - Decrement, Compare
 Equivalant to `DEC`, `CMP`.
 
-### `ISC` - Increment, Subtract with Carry
-Equivalant to `INC`, `SBC`.
-> Also known as `ISB`.
+#### ISC - Increment, Subtract with Carry
+Equivalant to `INC`, `SBC`.  
+Also known as `ISB`.
 
-### `ANC` - And, Rotate Left
+#### ANC - And, Rotate Left
 Performs an `AND` immediate, but bit 7 is put into the carry as if `ASL` or `ROL` were executed.
 
-### `ALR` - And, Shift Right
+#### ALR - And, Shift Right
+`AND` immediate, then `LSR`.  
+Also known as `ASR`.
 
-`AND` immediate, then `LSR`
-
-> Also known as `ASR`.
-
-### `ARR` - And, Rotate Right
-
+#### ARR - And, Rotate Right
 Similar to `ALR` but also updates the V flag.  
 Bit 0 does _not_ go into carry, but bit 7 is exchanged with the carry.  
 
-### `AXS` - A & X, Subtract Immediate
-
+#### AXS - A & X, Subtract Immediate
 Stores (A & X) - #immediate into X.  
-Performs `CMP` and `DEX` at the same time, so that the MINUS sets the flag like `CMP`, not `SBC`.
+Performs `CMP` and `DEX` at the same time, so that the MINUS sets the flag like `CMP`, not `SBC`.  
+Also known as `SBX`.
 
-> Also known as `SBX`.
-
-### `LAS`
-
+#### LAS
 Stores the bitwise and of S and the opreand into A, X and S.  
-> Also known as `LAR`
+Also known as `LAR`.
 
-### `AHX` - Store A & H & X
-
-Stores A & X & H into the operand.
+#### AHX - Store A & H & X
+Stores A & X & H into the operand.  
 Sometimes the H drops off. Page boundary crossing will not work as expected; the bank where the value is stored may not be equal to the value stored.
 
-### `SHY` - Store H & Y
-
+#### SHY - Store H & Y
 Stores Y & H into the operand.  
 Sometimes the &H drops off. Page boundary crossing will not work as expected; the bank where the value is stored may not be equal to the value stored.
 
-### `SHX` - Store H&X
-
+#### SHX - Store H & X
 Stores X & H into the operand.  
 Sometimes the &H drops off. Page boundary crossing will not work as expected; the bank where the value is stored may not be equal to the value stored.
 
-### `TAS`
-
+#### TAS
 Stores A & X into S and A & X & H into the operand.
 
-### `XAA`
-
-Bitwise and X and the operand
-
-Very Unstable
-> Also known as `ANE`
+#### XAA
+Bitwise and X and the operand.  
+Very Unstable.  
+Also known as `ANE`
