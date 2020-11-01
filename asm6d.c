@@ -20,6 +20,18 @@
         errmsg = err;   \
         return;         \
     } while (0)
+#define PROPOGATE_ERROR \
+    do                  \
+    {                   \
+        if (errmsg)     \
+            return 0;   \
+    } while (0)
+#define PROPOGATE_ERROR_VOID \
+    do                       \
+    {                        \
+        if (errmsg)          \
+            return;          \
+    } while (0)
 
 static void *true_ptr = &true_ptr;
 
@@ -294,6 +306,7 @@ const char *UndefinedPC = "PC is undefined (use ORG first).";
 const char *UnknownLabel = "Unknown label.";
 const char *WriteFileError = "Error writing file.";
 const char *CreateFileError = "Can't create file.";
+const char *BadLabel = "Invalid label name.";
 
 #define WHITESPACE " \t\v\r\n"
 const char *whitespace = WHITESPACE;
@@ -407,6 +420,16 @@ static void fatal_error(const char fmt[], ...)
     exit(EXIT_FAILURE);
 }
 
+// sets harderror, prints errmsg with file and line number info,
+// sets listerr if it is NULL
+void showerror(char *errsrc, int errline)
+{
+    harderror = true;
+    fprintf(stderr, "%s(%i): %s\n", errsrc, errline, errmsg);
+    if (!listerr) // only list the first error for this line
+        listerr = errmsg;
+}
+
 // Prints printf-style message if verbose mode is enabled.
 static void message(const char fmt[], ...)
 {
@@ -417,6 +440,25 @@ static void message(const char fmt[], ...)
         vprintf(fmt, args);
         va_end(args);
     }
+}
+
+static void warn(const char *restrict format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    fputs("Warning: ", stderr);
+    vfprintf(stderr, format, args);
+    va_end(args);
+}
+
+// TODO display error info more nicely
+static void errorinfo(const char *restrict format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    fputs("info: ", stderr);
+    vfprintf(stderr, format, args);
+    va_end(args);
 }
 
 // Same as malloc, but prints error and exits if allocation fails.
@@ -521,6 +563,7 @@ int getvalue(char **str)
             do
             {
                 int j = hexify(*s);
+                PROPOGATE_ERROR;
                 s++;
                 chars++;
                 ret = (ret << 4) | j;
@@ -540,7 +583,7 @@ int getvalue(char **str)
             chars++;
             j -= '0';
             if (j > 1)
-                errmsg = NotANumber;
+                THROW(NotANumber);
             ret = (ret << 1) | j;
         } while (*s);
         if (chars > 32)
@@ -679,8 +722,9 @@ int eval(char **str, enum prectype precedence)
 {
     int ret;
 
-    char *s = *str + strspn(*str, whitespace);
-    char unary = *s;
+    *str += strspn(*str, whitespace);
+    char *s = *str;
+    char unary = s[0];
     switch (unary)
     {
     case '(':
@@ -690,7 +734,10 @@ int eval(char **str, enum prectype precedence)
         if (*s == ')')
             s++;
         else
-            errmsg = IncompleteExp;
+        {
+            *str = s;
+            THROW(IncompleteExp);
+        }
         break;
     case '~':
         s++;
@@ -711,25 +758,29 @@ int eval(char **str, enum prectype precedence)
     case '+':
     case '-':;
         // careful, might be +/- label
-        char *s2 = s;
-        s++;
         bool val2 = needanotherpass;
         bool temp = dependant; // eval is reentrant so don't mess up dependant
+
+        char *s2 = s;
         dependant = false;
         ret = getvalue(&s2);
         if (errmsg == UnknownLabel)
             errmsg = NULL;
+        s++;
+
         if (!dependant || s2 == s)
         { // found something or a single +/-
             s = s2;
             s2 = NULL; // flag that we got something
-            dependant |= temp;
+            if (temp)
+                dependant = true;
         }
         else
         { // not a label after all
             dependant = temp;
             needanotherpass = val2;
         }
+
         if (s2)
         { // if it wasn't a +/- label
             ret = eval(&s, UNARY);
@@ -737,11 +788,20 @@ int eval(char **str, enum prectype precedence)
                 ret = -ret;
         }
         break;
+    case ':':
+        // if the user tries to define a label with the same name as an
+        // instruction or directive, the colon (possibly followed by text) will
+        // be interperated as an operand or argument. it would then be
+        // interpereted as a label in the call to getvalue, and the error
+        // wouldn't be caught until the final pass when getvalue determines it's
+        // an unknown label. Catching it here means the error will be shown on
+        // the first pass, and a better diagnostic can be given.
+        THROW("Unexpected colon.");
     default:
         ret = getvalue(&s);
     }
 
-    int op;
+    enum operator op;
     do
     {
         *str = s;
@@ -780,13 +840,13 @@ int eval(char **str, enum prectype precedence)
                     break;
                 case DIV:
                     if (val2 == 0)
-                        errmsg = DivZero;
+                        THROW(DivZero);
                     else
                         ret /= val2;
                     break;
                 case MOD:
                     if (val2 == 0)
-                        errmsg = DivZero;
+                        THROW(DivZero);
                     else
                         ret %= val2;
                     break;
@@ -896,41 +956,53 @@ symbol *getreserved(char **src)
     }
 
     if (!p)
-        errmsg = Illegal;
+        THROW(Illegal);
 
     return p;
 }
 
+// returns true if the word is a valid label.
+// only checks for valid syntax, not semantics.
+// word must not contain leading or trailing whitespace.
+bool labelvalid(const char *word)
+{
+    if (strlen(word) == 1)
+    {
+        if (*word == '$')
+            return true; // PC label
+
+        if (toupper(*word) == 'A')
+            return false; // Accumulator cant be a label
+    }
+
+    const char *s = word;
+
+    if (*word == '+' || *word == '-')
+    { // direcitonal label
+        do
+            ++s;
+        while (*s == *word);
+        if (!*s) // pure directional label
+            return true;
+    }
+
+    if (*s == LOCALCHAR || *s == '_' || isalpha(*s))
+    { // label can start with these
+        return true;
+    }
+
+    return false;
+}
+
 // copy word to dst and advance src
-// return true if it looks like a label (without the :)
+// return true if it is a valid label name
 // otherwise set errmsg and return false
 bool readlabel(char *dst, char **src)
 {
     getword(dst, src, true);
-    if (*dst == '$' && !dst[1]) // $ label
+    if (labelvalid(dst))
         return true;
-
-    // +label, -label
-    char *s = dst;
-    char c = *s;
-    if (c == '+' || c == '-')
-    {
-        do
-            s++;
-        while (*s == c);
-        if (!*s) // just ++.. or --.., no text
-            return true;
-    }
-    c = *s;
-    if (c == LOCALCHAR || c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
-    { // label can start with these
-        return true;
-    }
-    else
-    {
-        errmsg = Illegal; // fucked up instruction
-        return false;
-    }
+    THROW(BadLabel);
 }
 
 // preprocessing step
@@ -1021,7 +1093,7 @@ char *expandline(char *dst, char *src)
                     if (p->used)
                     {
                         p = NULL;
-                        errmsg = RecurseEQU;
+                        THROW(RecurseEQU);
                     }
                     // else expand it
                 }
@@ -1620,53 +1692,64 @@ symbol *newlabel(void)
     return p;
 }
 
-// sets harderror, prints errmsg with file and line number info,
-// sets listerr if it is NULL
-void showerror(char *errsrc, int errline)
-{
-    harderror = true;
-    fprintf(stderr, "%s(%i): %s\n", errsrc, errline, errmsg);
-    if (!listerr) // only list the first error for this line
-        listerr = errmsg;
-}
-
 // process the open file f
 void processfile(FILE *f, char *filename)
 {
-    static char line[LINEMAX];
-    static int nest = 0;
-    nest++; // count nested includes
-
-    int lineno = 0;
-    while (fgets(line, LINEMAX, f))
-    {
-        lineno++;
-        processline(line, filename, lineno);
-    }
-    nest--;
-
-    if (!nest)
-    { // if main source file
-        errmsg = NULL;
-        if (iflevel)
-            errmsg = NoENDIF;
-        if (reptcount)
-            errmsg = NoENDR;
-        if (macro_next)
-            errmsg = NoENDM;
-        if (inside_enum)
-            errmsg = NoENDE;
-        if (nonl)
-            errmsg = NoENDINL;
-        if (errmsg)
-            showerror(filename, lineno);
-    }
 }
 
+void processmacroline(char *line, const char *comment)
+{
+    char *s = line;
+    symbol *p = getreserved(&s);
+    errmsg = NULL; // why?
+    char *label_end = NULL;
+    if (!p)
+    { // there was a label, skip it, we're looking for .endm
+        // s points into line between the label and the next token
+        label_end = s;
+        p = getreserved(&s);
+    }
+
+    if (p && p->type == RESERVED && p->func == endm)
+    { // we have a .endm, possibly with a label
+        comment = NULL;
+        if (label_end)
+        { // hide the .endm in case of label: .endm
+            // this modifies line
+            label_end[0] = '\n';
+            label_end[1] = '\0';
+        }
+        else
+        { // it's just .endm without a label, don't bother adding it
+            macro_next = NULL;
+        }
+    }
+
+    if (macro_next && macro_next != true_ptr)
+    // macro_next will be true_ptr if we should skip over this macro
+    {
+        // add the line to the macro
+
+        if (comment)
+            // keep the comment for listing,
+            // it'll get stripped off again when the macro gets processed
+            strncat(line, comment, LINEMAX);
+
+        // macro_next should always be a pointer to a NULL pointer
+        *macro_next = my_malloc(sizeof(linked_node));
+        (**macro_next).text = my_strdup(line);
+        (**macro_next).next = NULL;
+        macro_next = &((**macro_next).next);
+    }
+
+    if (p && p->type == RESERVED && p->func == endm)
+        macro_next = NULL; // macro is done
+}
 // process single line
 // src = source line
 // filename = source file name
 // lineno = source file line number
+// noexcept garunteed
 void processline(char *src, char *filename, int lineno)
 {
     char line[LINEMAX]; // expanded line
@@ -1676,59 +1759,21 @@ void processline(char *src, char *filename, int lineno)
     errmsg = NULL; // why?
 
     char *comment = expandline(line, src);
-    if (!insidemacro || verboselisting)
-        listline(line, comment);
-
     if (errmsg)
-    { // expandline error
+    {
         showerror(filename, lineno);
+        errmsg = NULL;
         return;
     }
+
+    if (!insidemacro || verboselisting)
+        listline(line, comment);
 
     char *s = line;
 
     if (macro_next)
     { // we're inside a macro definition
-        p = getreserved(&s);
-        errmsg = NULL;
-        char *label_end = NULL;
-        if (!p)
-        { // there was a label, skip it, we're looking for .endm
-            label_end = s;
-            // label_end points into line between the label and the next token
-            p = getreserved(&s);
-        }
-
-        if (p && p->func == endm)
-        { // we have a .endm, possibly with a label
-            comment = NULL;
-            if (label_end)
-            { // hide the .endm in case of label: .endm
-                // this modifies line
-                label_end[0] = '\n';
-                label_end[1] = '\0';
-            }
-            else
-            { // it's just .endm without a label, don't bother adding it
-                macro_next = NULL;
-            }
-        }
-
-        if (macro_next && macro_next != true_ptr)
-        // macro_next will be true_ptr if we should skip over this macro
-        {
-            // add the line to the macro
-            if (comment)               // keep the comment for listing,
-                strcat(line, comment); // it'll get stripped off again when the macro gets processed
-            // *macro_next should be NULL
-            *macro_next = my_malloc(sizeof(linked_node));
-            (**macro_next).text = my_strdup(line);
-            (**macro_next).next = NULL;
-            macro_next = &((**macro_next).next);
-        }
-
-        if (p && p->func == endm)
-            macro_next = NULL; // macro is done
+        processmacroline(line, comment);
         return;
     }
 
@@ -1777,12 +1822,13 @@ void processline(char *src, char *filename, int lineno)
         return;
     }
 
-    labelhere = NULL; // set to NULL in case of non-label symbol definitions (EQU, =, etc)
-    char *s2 = s;     // should always be line? - no, the rept/macro code can modify s
+    labelhere = NULL; // labelhere could still hold a label left over from a previous line.
+                      // set to NULL in case there is directive that requires a label.
+                      // i.e. any function that might set errmsg to NeedName.
+    char *s2 = line;
     p = getreserved(&s);
-    errmsg = NULL;
+    errmsg = NULL; // why?
 
-    // TODO check for potential weirdness when using conditional assembly and rept/macro
     if (skipline[iflevel])
     { // conditional assembly.. no code generation
         if (!p)
@@ -1843,6 +1889,7 @@ void processline(char *src, char *filename, int lineno)
 
     if (errmsg)
         showerror(filename, lineno);
+    errmsg = NULL;
 }
 
 void showhelp(void)
@@ -2187,7 +2234,7 @@ void listline(char *src, char *comment)
             // he might still have old listing and think it's the current one.
             // For example, he might have had it open in a text editor, preventing its
             // creation here.
-            fputs("Can't create list file.\n", stderr); // not critical, just give a warning
+            warn("Can't create list file.\n"); // not critical, just give a warning
             return;
         }
     }
@@ -2246,28 +2293,26 @@ void equ(symbol *id, char **next)
     char *s = *next;
     if (!labelhere)
         THROW_VOID(NeedName); // EQU without a name
-    else
-    {
-        if (labelhere->type == LABEL)
-        {                                              // new EQU.. good
-            reverse(str, s + strspn(s, whitespace));   // eat whitespace off both ends
-            reverse(s, str + strspn(str, whitespace)); // TODO why not use strtok?
-            if (*s)
-            {
-                labelhere->line = my_strdup(s);
-                labelhere->type = EQUATE;
-            }
-            else
-            {
-                errmsg = IncompleteExp;
-            }
-        }
-        else if (labelhere->type != EQUATE)
+
+    if (labelhere->type == LABEL)
+    {                                              // new EQU.. good
+        reverse(str, s + strspn(s, whitespace));   // eat whitespace off both ends
+        reverse(s, str + strspn(str, whitespace)); // TODO why not use strtok?
+        if (*s)
         {
-            errmsg = LabelDefined;
+            labelhere->line = my_strdup(s);
+            labelhere->type = EQUATE;
         }
-        *s = '\0'; // end line
+        else
+        {
+            errmsg = IncompleteExp;
+        }
     }
+    else if (labelhere->type != EQUATE)
+    {
+        errmsg = LabelDefined;
+    }
+    *s = '\0'; // end line
 }
 
 void equal(symbol *id, char **next)
@@ -2307,15 +2352,41 @@ void include(symbol *id, char **next)
 
     if (!f)
     {
-        harderror = true;
+        harderror = true; // why?
         THROW_VOID(CantOpen);
     }
-    else
+
+    static char line[LINEMAX];
+    static int nest = 0;
+    nest++; // count nested includes
+
+    int lineno = 0;
+    while (fgets(line, LINEMAX, f))
     {
-        processfile(f, filename);
-        fclose(f);
-        errmsg = NULL; // let main know file was ok -- why here?
+        lineno++;
+        processline(line, filename, lineno);
     }
+    nest--;
+
+    if (!nest)
+    { // if main source file -- why not do this in main?
+        if (iflevel)
+            errmsg = NoENDIF;
+        if (reptcount)
+            errmsg = NoENDR;
+        if (macro_next)
+            errmsg = NoENDM;
+        if (inside_enum)
+            errmsg = NoENDE;
+        if (nonl)
+            errmsg = NoENDINL;
+        if (errmsg)
+            showerror(filename, lineno);
+    }
+
+    fclose(f);
+    errmsg = NULL; // let main know file was ok -- why here?
+
     *next = filename + strlen(filename);
 }
 
@@ -2515,11 +2586,10 @@ void dsw(symbol *id, char **next)
         count = 0;
     if (eatchar(next, ','))
         val = eval(next, WHOLEEXP);
-    if (!errmsg && !dependant)
+    PROPOGATE_ERROR_VOID;
+    if (!dependant)
         if (val > 65535 || val < -32768 || count < 0)
-            errmsg = OutOfRange;
-    if (errmsg)
-        return;
+            THROW_VOID(OutOfRange);
     while (count--)
         output_le(val, 2, DATA);
 }
@@ -2531,11 +2601,11 @@ void filler(int count, char **next)
         count = 0;
     if (eatchar(next, ','))
         val = eval(next, WHOLEEXP);
-    if (!errmsg && !dependant)
+    PROPOGATE_ERROR_VOID;
+    if (!dependant)
         if (val > 255 || val < -128 || count < 0 || count > 0x100000)
             THROW_VOID(OutOfRange);
-    if (errmsg)
-        return;
+
     while (count--) //!#@$
         output_le(val, 1, NONE);
 }
@@ -2544,6 +2614,7 @@ void dsb(symbol *id, char **next)
 {
     dependant = false;
     int count = eval(next, WHOLEEXP);
+    PROPOGATE_ERROR_VOID;
     filler(count, next);
 }
 
@@ -2569,7 +2640,7 @@ void pad(symbol *id, char **next)
     int count;
     if (PC < 0)
     {
-        errmsg = UndefinedPC;
+        THROW_VOID(UndefinedPC);
     }
     else
     {
@@ -2597,8 +2668,7 @@ void opcode(symbol *id, char **next)
     if (!allow_undocumented)
         for (int uns = 0; undocumented_list[uns]; uns++)
             if (!strcmp(id->name, undocumented_list[uns]))
-                // TODO should this really be a fatal error?
-                fatal_error("Undocumented instruction \"%s\" used without calling .undoc.", id->name);
+                THROW_VOID("Undocumented instruction used without calling .undoc.");
 
     for (const instruction *op = id->opcodes; op->type != -1; op++)
     { // loop through all addressing modes for this instruction
@@ -2680,10 +2750,9 @@ void opcode(symbol *id, char **next)
         *next += s - tmpstr;
         return;
     }
-
     // none of the optypes matched
-    if (!errmsg)
-        errmsg = Illegal;
+    PROPOGATE_ERROR_VOID;
+    THROW_VOID(Illegal);
 }
 
 void _if(symbol *id, char **next)
@@ -2773,76 +2842,84 @@ void endif(symbol *id, char **next)
     if (iflevel)
         --iflevel;
     else
-        errmsg = ExtraENDIF;
+        THROW_VOID(ExtraENDIF);
 }
 
 void endm(symbol *id, char **next)
 { // ENDM is handled during macro definition (see processline)
-    errmsg = ExtraENDM;
+    THROW_VOID(ExtraENDM);
 }
 
 void endr(symbol *id, char **next)
 { // ENDR is handled during macro definition (see processline)
-    errmsg = ExtraENDR;
+    THROW_VOID(ExtraENDR);
 }
 
 void macro(symbol *id, char **next)
 {
-    char *src;
-    char word[WORDMAX] = {'.'};
-    labelhere = NULL;
-    if (readlabel(word + 1, next))
-        addlabel(word, false); // add the label with prepended '.'
-    else
-        errmsg = NeedName;
+    macro_next = true_ptr; // tell processline to skip over the macro def,
+                           // unless macro_next gets set
 
-    if (errmsg)
+    if (labelhere)
+        // if the user defines a macro like so
+        //
+        //      myCoolMacro: .macro param1
+        //          ADC param1
+        //      .endm
+        //
+        // they might expect a macro named .myCoolMacro
+        warn("label %s does not name macro\n", labelhere->name);
+    labelhere = NULL;
+
+    char word[WORDMAX] = {'.'};
+    if (readlabel(word + 1, next))
     {
-        // no valid macro name, either no name given or the name was taken
-        macro_next = true_ptr; // tell processline to skip over the macro
-        return;
+        addlabel(word, false); // add the label with prepended '.'
+        PROPOGATE_ERROR_VOID;
     }
+    else
+        THROW_VOID(NeedName);
 
     if (labelhere->type == LABEL)
     { // new macro
         labelhere->type = MACRO;
         labelhere->line_list = NULL;
         macro_next = &(labelhere->line_list);
+
         // build param list
-        long params = 0;
-        src = *next; // don't affect next directly, make sure it's a good name first
-        while (readlabel(word, &src))
-        { // add each param to the macro's line_list
-            *next = src;
-            (*macro_next) = my_malloc(sizeof(linked_node));
-            (*macro_next)->text = my_strdup(word);
-            (*macro_next)->next = NULL;
-            macro_next = &((*macro_next)->next);
-            ++params;
-            eatchar(&src, ',');
+        labelhere->value = 0; // param count
+
+        *next += strspn(*next, whitespace);
+        if (**next) // check if theres any params at all
+        {
+            do // add each param to the macro's line_list
+            {
+                readlabel(word, next);
+                PROPOGATE_ERROR_VOID;
+                (*macro_next) = my_malloc(sizeof(linked_node));
+                (*macro_next)->text = my_strdup(word);
+                (*macro_next)->next = NULL;
+                macro_next = &((*macro_next)->next);
+                labelhere->value++;
+            } while (eatchar(next, ','));
         }
-        errmsg = NULL;             // remove readlabel's errmsg
-        labelhere->value = params; // set param count
     }
     else if (labelhere->type == MACRO)
     { // macro was defined on a previous pass.. skip past params
-        // TODO what if the user tries to redefine a macro?
-        macro_next = true_ptr; // flag for processline to skip to ENDM
-        **next = '\0';         // rather than skip over the params, just terminate the line here
+        // what if the user tries to redefine a macro?
+        macro_next = true_ptr;  // flag for processline to skip to ENDM
+        *next += strlen(*next); // skip over param names
     }
     else
     { // label is already defined as something else
-        errmsg = LabelDefined;
-        macro_next = true_ptr; // flag for processline to skip to ENDM
+        THROW_VOID(LabelDefined);
     }
 }
 
 void expandmacro(symbol *id, char **next, int lineno, char *filename)
 {
     if (id->used)
-    { // protect against recursive macros
         THROW_VOID(RecurseMACRO);
-    }
     id->used = true;
     insidemacro++;
     int oldscope = scope;
@@ -2888,13 +2965,16 @@ void expandmacro(symbol *id, char **next, int lineno, char *filename)
             { // make named arg
                 char *temp = s;
                 addlabel(line->text, true);
+                PROPOGATE_ERROR_VOID;
                 equ(NULL, &temp);
+                PROPOGATE_ERROR_VOID;
                 line = line->next; // next arg name
             }
             char argname[WORDMAX]; // indexed arg
             sprintf(argname, "\\%d", arg);
             addlabel(argname, true);
             equ(NULL, &s);
+            PROPOGATE_ERROR_VOID;
             labelhere->ignorenl = true;
             arg++;
         }
@@ -2928,12 +3008,12 @@ void expandmacro(symbol *id, char **next, int lineno, char *filename)
 
 void rept(symbol *id, char **next)
 {
-    dependant = false; // why?
+    dependant = false;
     rept_loops = eval(next, WHOLEEXP);
     if (dependant || errmsg || rept_loops < 0)
         rept_loops = 0;
-    rept_tail = &rept_head;
     rept_head = NULL;
+    rept_tail = &rept_head;
     reptcount++; // tell processline to start storing up rept lines
 }
 
